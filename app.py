@@ -1,4 +1,3 @@
-import logging
 import os
 import re
 import threading
@@ -9,9 +8,6 @@ from flask import Flask, jsonify, render_template
 import requests
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("zambia-election-live")
 
 ECZ_URL = "https://results.elections.org.zm/"
 FETCH_MINUTES = int(os.getenv("FETCH_MINUTES", "30"))
@@ -58,27 +54,22 @@ def clean_pct(value):
 _fetch_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ecz-fetch")
 
 def fetch_results():
-    print("[ecz-fetch] fetch_results() called, submitting to executor", flush=True)
     try:
         _fetch_executor.submit(_fetch_once).result(timeout=40)
-        print("[ecz-fetch] fetch completed successfully", flush=True)
     except FutureTimeoutError:
-        print("[ecz-fetch] TIMED OUT after 40s waiting on future.result()", flush=True)
-        log.warning("ECZ fetch timed out after 40s (network unreachable from this host?)")
+        print("[ecz-fetch] timed out after 40s (network unreachable from this host?)", flush=True)
         with lock:
             cache["status"] = "error"
             cache["error"] = "Timed out reaching the ECZ results portal from this server"
             cache["fetched_at"] = datetime.now(timezone.utc).isoformat()
     except Exception as exc:
-        print(f"[ecz-fetch] EXCEPTION: {exc!r}", flush=True)
-        log.warning("ECZ fetch failed: %s", exc)
+        print(f"[ecz-fetch] failed: {exc!r}", flush=True)
         with lock:
             cache["status"] = "error"
             cache["error"] = str(exc)
             cache["fetched_at"] = datetime.now(timezone.utc).isoformat()
 
 def _fetch_once():
-    print("[ecz-fetch] _fetch_once() started, resolving/connecting...", flush=True)
     headers = {
         "User-Agent": "ZambiaElectionLive/1.0 (public results aggregator; contact operator before production use)"
     }
@@ -86,7 +77,6 @@ def _fetch_once():
     # a slow/trickling response can keep resetting requests' per-read
     # timeout indefinitely, so bound total fetch time explicitly too.
     r = requests.get(ECZ_URL, headers=headers, timeout=(10, 15), stream=True)
-    print(f"[ecz-fetch] got response headers, status={r.status_code}", flush=True)
     r.raise_for_status()
     deadline = time.monotonic() + 25
     chunks = []
@@ -94,7 +84,6 @@ def _fetch_once():
         if time.monotonic() > deadline:
             raise TimeoutError("ECZ fetch exceeded max total duration")
         chunks.append(chunk)
-    print(f"[ecz-fetch] downloaded {sum(len(c) for c in chunks)} bytes", flush=True)
     html = b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ", strip=True)
@@ -208,7 +197,6 @@ def _parse_and_cache(soup, text):
     with lock:
         cache.clear()
         cache.update(payload)
-    print(f"[ecz-fetch] cache updated in-process, pid={os.getpid()}, id(cache)={id(cache)}, status={cache['status']}", flush=True)
 
 @app.get("/")
 def index():
@@ -222,10 +210,21 @@ def api_results():
 @app.get("/health")
 def health():
     with lock:
-        print(f"[ecz-fetch] /health read, pid={os.getpid()}, id(cache)={id(cache)}, status={cache['status']}", flush=True)
         return jsonify({"status": cache["status"], "fetched_at": cache["fetched_at"]})
 
+_scheduler_started = False
+
 def start_scheduler():
+    # Gunicorn's master/arbiter process also imports this module to
+    # validate the WSGI callable, so this must NOT run at bare module
+    # scope: it would spin up a scheduler in the master too, a separate
+    # process whose cache is invisible to the worker serving requests.
+    # gunicorn.conf.py's post_fork hook calls this inside each worker
+    # instead; `python app.py` calls it directly below.
+    global _scheduler_started
+    if _scheduler_started:
+        return
+    _scheduler_started = True
     # Run off the boot thread so a slow first fetch can't delay the
     # WSGI server from binding its port / passing a platform health check.
     threading.Thread(target=fetch_results, daemon=True).start()
@@ -233,11 +232,6 @@ def start_scheduler():
     scheduler.add_job(fetch_results, "interval", minutes=FETCH_MINUTES, id="ecz_fetch", replace_existing=True)
     scheduler.start()
 
-# Runs on import so the fetch loop also starts under a WSGI server
-# (e.g. `gunicorn app:app`), not just `python app.py`. The Procfile
-# pins gunicorn to a single worker so this in-process scheduler
-# doesn't end up running multiple times.
-start_scheduler()
-
 if __name__ == "__main__":
+    start_scheduler()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))

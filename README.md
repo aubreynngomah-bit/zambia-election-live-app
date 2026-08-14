@@ -29,13 +29,21 @@ Open http://localhost:5000
 
 ## Production
 
-Use a WSGI server such as Gunicorn:
+Use a WSGI server such as Gunicorn, with the included config:
 
 ```bash
-gunicorn app:app
+gunicorn app:app --config gunicorn.conf.py
 ```
 
+`gunicorn.conf.py` starts the background fetch scheduler from a `post_fork`
+hook so it only runs inside the worker process that actually serves
+requests (gunicorn's master process also imports the app to validate it,
+which would otherwise start a second, unused scheduler there).
+
 Set `FETCH_MINUTES=30` if you want to make the interval explicit.
+
+Deploying to Render: push this repo and use `render.yaml` (Blueprint deploy)
+or set the start command above manually.
 
 ## Important
 

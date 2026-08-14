@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: zambia-election-live
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --worker-class gthread --threads 4 --timeout 60
+    envVars:
+      - key: FETCH_MINUTES
+        value: "30"
+    healthCheckPath: /health

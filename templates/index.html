@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zambia Election Live — ECZ Results</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="flag">🇿🇲</div>
+    <div>
+      <div class="eyebrow">2026 GENERAL ELECTION</div>
+      <h1>Zambia Election Live</h1>
+    </div>
+  </div>
+  <a class="source" href="https://results.elections.org.zm/" target="_blank" rel="noopener">Official ECZ source ↗</a>
+</header>
+
+<main>
+  <section class="notice">
+    <strong>Official-results dashboard</strong>
+    <span>This app republishes figures fetched from the Electoral Commission of Zambia results portal. It does not estimate or project results.</span>
+  </section>
+
+  <section class="hero">
+    <div>
+      <div class="eyebrow">PRESIDENTIAL</div>
+      <h2>National Results</h2>
+      <p id="updated">Loading official data…</p>
+    </div>
+    <div class="live"><span></span> AUTO UPDATE</div>
+  </section>
+
+  <section class="cards">
+    <article><span>Constituencies reporting</span><b id="reporting">—</b><small id="total">of —</small></article>
+    <article><span>Results received</span><b id="pct">—</b><small>of constituencies</small></article>
+    <article><span>Valid votes</span><b id="valid">—</b><small>officially reported</small></article>
+    <article><span>Registered voters</span><b id="registered">—</b><small>ECZ figure</small></article>
+  </section>
+
+  <section class="progress-wrap">
+    <div class="progress-label"><span>Reporting progress</span><strong id="progressText">—</strong></div>
+    <div class="progress"><i id="progress"></i></div>
+  </section>
+
+  <section class="results">
+    <div class="section-head">
+      <div>
+        <h3>Presidential leaderboard</h3>
+        <p>Ranked by official votes received.</p>
+      </div>
+      <button onclick="loadResults()">Refresh now</button>
+    </div>
+    <div id="leaderboard" class="leaderboard"></div>
+  </section>
+
+  <footer>
+    <span>Source: Electoral Commission of Zambia</span>
+    <span>Server refresh: every 30 minutes · Page refresh: every 60 seconds</span>
+  </footer>
+</main>
+
+<script>
+const fmt = n => n === null || n === undefined ? "—" : Number(n).toLocaleString("en-ZM");
+
+async function loadResults() {
+  try {
+    const res = await fetch("/api/results", {cache:"no-store"});
+    const d = await res.json();
+
+    const s = d.summary || {};
+    document.getElementById("reporting").textContent = fmt(s.constituencies_reporting);
+    document.getElementById("total").textContent = "of " + fmt(s.total_constituencies);
+    document.getElementById("pct").textContent = s.percentage_received == null ? "—" : s.percentage_received.toFixed(1) + "%";
+    document.getElementById("valid").textContent = fmt(s.valid_votes);
+    document.getElementById("registered").textContent = fmt(s.registered_voters);
+    document.getElementById("progressText").textContent = s.percentage_received == null ? "—" : s.percentage_received.toFixed(1) + "%";
+    document.getElementById("progress").style.width = Math.min(100, Math.max(0, s.percentage_received || 0)) + "%";
+
+    const when = d.fetched_at ? new Date(d.fetched_at).toLocaleString("en-ZM") : "—";
+    document.getElementById("updated").textContent =
+      d.status === "ok" ? "Last official source fetch: " + when :
+      "Source fetch problem: " + (d.error || "unknown error");
+
+    const list = [...(d.candidates || [])].sort((a,b)=>(b.votes||0)-(a.votes||0));
+    const el = document.getElementById("leaderboard");
+
+    if (!list.length) {
+      el.innerHTML = `<div class="empty">No candidate results have been exposed by the official source yet.</div>`;
+      return;
+    }
+
+    el.innerHTML = list.map((c, i) => {
+      const pct = c.percentage == null ? "—" : c.percentage.toFixed(2) + "%";
+      return `
+      <div class="candidate">
+        <div class="rank">${i+1}</div>
+        <div class="candidate-main">
+          <strong>${escapeHtml(c.name)}</strong>
+          <span>${escapeHtml(c.party || "—")}</span>
+        </div>
+        <div class="vote"><strong>${fmt(c.votes)}</strong><small>${pct}</small></div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    document.getElementById("updated").textContent = "Unable to reach this app's results endpoint.";
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadResults();
+setInterval(loadResults, 60000);
+</script>
+</body>
+</html>

@@ -58,15 +58,19 @@ def clean_pct(value):
 _fetch_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ecz-fetch")
 
 def fetch_results():
+    print("[ecz-fetch] fetch_results() called, submitting to executor", flush=True)
     try:
         _fetch_executor.submit(_fetch_once).result(timeout=40)
+        print("[ecz-fetch] fetch completed successfully", flush=True)
     except FutureTimeoutError:
+        print("[ecz-fetch] TIMED OUT after 40s waiting on future.result()", flush=True)
         log.warning("ECZ fetch timed out after 40s (network unreachable from this host?)")
         with lock:
             cache["status"] = "error"
             cache["error"] = "Timed out reaching the ECZ results portal from this server"
             cache["fetched_at"] = datetime.now(timezone.utc).isoformat()
     except Exception as exc:
+        print(f"[ecz-fetch] EXCEPTION: {exc!r}", flush=True)
         log.warning("ECZ fetch failed: %s", exc)
         with lock:
             cache["status"] = "error"
@@ -74,6 +78,7 @@ def fetch_results():
             cache["fetched_at"] = datetime.now(timezone.utc).isoformat()
 
 def _fetch_once():
+    print("[ecz-fetch] _fetch_once() started, resolving/connecting...", flush=True)
     headers = {
         "User-Agent": "ZambiaElectionLive/1.0 (public results aggregator; contact operator before production use)"
     }
@@ -81,6 +86,7 @@ def _fetch_once():
     # a slow/trickling response can keep resetting requests' per-read
     # timeout indefinitely, so bound total fetch time explicitly too.
     r = requests.get(ECZ_URL, headers=headers, timeout=(10, 15), stream=True)
+    print(f"[ecz-fetch] got response headers, status={r.status_code}", flush=True)
     r.raise_for_status()
     deadline = time.monotonic() + 25
     chunks = []
@@ -88,6 +94,7 @@ def _fetch_once():
         if time.monotonic() > deadline:
             raise TimeoutError("ECZ fetch exceeded max total duration")
         chunks.append(chunk)
+    print(f"[ecz-fetch] downloaded {sum(len(c) for c in chunks)} bytes", flush=True)
     html = b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ", strip=True)

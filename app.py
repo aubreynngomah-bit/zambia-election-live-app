@@ -208,6 +208,7 @@ def _parse_and_cache(soup, text):
     with lock:
         cache.clear()
         cache.update(payload)
+    print(f"[ecz-fetch] cache updated in-process, pid={os.getpid()}, id(cache)={id(cache)}, status={cache['status']}", flush=True)
 
 @app.get("/")
 def index():
@@ -221,6 +222,7 @@ def api_results():
 @app.get("/health")
 def health():
     with lock:
+        print(f"[ecz-fetch] /health read, pid={os.getpid()}, id(cache)={id(cache)}, status={cache['status']}", flush=True)
         return jsonify({"status": cache["status"], "fetched_at": cache["fetched_at"]})
 
 def start_scheduler():

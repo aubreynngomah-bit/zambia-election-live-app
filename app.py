@@ -1,6 +1,7 @@
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template
 import requests
@@ -47,9 +48,19 @@ def fetch_results():
         "User-Agent": "ZambiaElectionLive/1.0 (public results aggregator; contact operator before production use)"
     }
     try:
-        r = requests.get(ECZ_URL, headers=headers, timeout=20)
+        # (connect, read) timeout tuple, plus a hard wall-clock deadline below:
+        # a slow/trickling response can keep resetting requests' per-read
+        # timeout indefinitely, so bound total fetch time explicitly too.
+        r = requests.get(ECZ_URL, headers=headers, timeout=(10, 15), stream=True)
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        deadline = time.monotonic() + 25
+        chunks = []
+        for chunk in r.iter_content(chunk_size=8192):
+            if time.monotonic() > deadline:
+                raise TimeoutError("ECZ fetch exceeded max total duration")
+            chunks.append(chunk)
+        html = b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
+        soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True)
 
         # Summary: "0/226", "12.5% of results received", etc.
